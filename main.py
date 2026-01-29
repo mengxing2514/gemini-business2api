@@ -53,6 +53,8 @@ from core.google_api import (
 from core.account import (
     AccountManager,
     MultiAccountManager,
+    RetryPolicy,
+    CooldownConfig,
     format_account_expiration,
     load_multi_account_config,
     load_accounts_from_source,
@@ -362,6 +364,22 @@ CHAT_URL = config.public_display.chat_url
 IMAGE_GENERATION_ENABLED = config.image_generation.enabled
 IMAGE_GENERATION_MODELS = config.image_generation.supported_models
 
+def get_request_quota_type(model_name: str) -> str:
+    """根据模型名称返回本次请求的配额类型。"""
+    if model_name in MODEL_TO_QUOTA_TYPE:
+        return MODEL_TO_QUOTA_TYPE[model_name]
+    if IMAGE_GENERATION_ENABLED and model_name in IMAGE_GENERATION_MODELS:
+        return "images"
+    return "text"
+
+def get_required_quota_types(model_name: str) -> List[str]:
+    """所有请求都需要文本配额；图/视频请求还需要对应配额。"""
+    required = ["text"]
+    request_quota = get_request_quota_type(model_name)
+    if request_quota != "text":
+        required.append(request_quota)
+    return required
+
 # ---------- 虚拟模型映射 ----------
 VIRTUAL_MODELS = {
     "gemini-imagen": {"imageGenerationSpec": {}},
@@ -390,10 +408,20 @@ def get_tools_spec(model_name: str) -> dict:
 MAX_NEW_SESSION_TRIES = config.retry.max_new_session_tries
 MAX_REQUEST_RETRIES = config.retry.max_request_retries
 MAX_ACCOUNT_SWITCH_TRIES = config.retry.max_account_switch_tries
-ACCOUNT_FAILURE_THRESHOLD = config.retry.account_failure_threshold
-RATE_LIMIT_COOLDOWN_SECONDS = config.retry.rate_limit_cooldown_seconds
 SESSION_CACHE_TTL_SECONDS = config.retry.session_cache_ttl_seconds
 AUTO_REFRESH_ACCOUNTS_SECONDS = config.retry.auto_refresh_accounts_seconds
+
+def build_retry_policy() -> RetryPolicy:
+    return RetryPolicy(
+        account_failure_threshold=config.retry.account_failure_threshold,
+        cooldowns=CooldownConfig(
+            text=config.retry.text_rate_limit_cooldown_seconds,
+            images=config.retry.images_rate_limit_cooldown_seconds,
+            videos=config.retry.videos_rate_limit_cooldown_seconds,
+        ),
+    )
+
+RETRY_POLICY = build_retry_policy()
 
 # ---------- 模型映射配置 ----------
 MODEL_MAPPING = {
@@ -473,8 +501,7 @@ USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTM
 multi_account_mgr = load_multi_account_config(
     http_client,
     USER_AGENT,
-    ACCOUNT_FAILURE_THRESHOLD,
-    RATE_LIMIT_COOLDOWN_SECONDS,
+    RETRY_POLICY,
     SESSION_CACHE_TTL_SECONDS,
     global_stats
 )
@@ -501,8 +528,7 @@ try:
         multi_account_mgr,
         http_client_auth,
         USER_AGENT,
-        ACCOUNT_FAILURE_THRESHOLD,
-        RATE_LIMIT_COOLDOWN_SECONDS,
+        RETRY_POLICY,
         SESSION_CACHE_TTL_SECONDS,
         _get_global_stats,
         _set_multi_account_mgr,
@@ -511,8 +537,7 @@ try:
         multi_account_mgr,
         http_client_auth,
         USER_AGENT,
-        ACCOUNT_FAILURE_THRESHOLD,
-        RATE_LIMIT_COOLDOWN_SECONDS,
+        RETRY_POLICY,
         SESSION_CACHE_TTL_SECONDS,
         _get_global_stats,
         _set_multi_account_mgr,
@@ -721,8 +746,7 @@ async def auto_refresh_accounts_task():
                     multi_account_mgr,
                     http_client,
                     USER_AGENT,
-                    ACCOUNT_FAILURE_THRESHOLD,
-                    RATE_LIMIT_COOLDOWN_SECONDS,
+                    RETRY_POLICY,
                     SESSION_CACHE_TTL_SECONDS,
                     global_stats
                 )
@@ -1190,7 +1214,7 @@ async def admin_update_config(request: Request, accounts_data: list = Body(...))
     try:
         multi_account_mgr = _update_accounts_config(
             accounts_data, multi_account_mgr, http_client, USER_AGENT,
-            ACCOUNT_FAILURE_THRESHOLD, RATE_LIMIT_COOLDOWN_SECONDS,
+            RETRY_POLICY,
             SESSION_CACHE_TTL_SECONDS, global_stats
         )
         return {"status": "success", "message": "配置已更新", "account_count": len(multi_account_mgr.accounts)}
@@ -1298,7 +1322,7 @@ async def admin_delete_account(request: Request, account_id: str):
     try:
         multi_account_mgr = _delete_account(
             account_id, multi_account_mgr, http_client, USER_AGENT,
-            ACCOUNT_FAILURE_THRESHOLD, RATE_LIMIT_COOLDOWN_SECONDS,
+            RETRY_POLICY,
             SESSION_CACHE_TTL_SECONDS, global_stats
         )
         return {"status": "success", "message": f"账户 {account_id} 已删除", "account_count": len(multi_account_mgr.accounts)}
@@ -1324,8 +1348,7 @@ async def admin_bulk_delete_accounts(request: Request, account_ids: list[str]):
             multi_account_mgr,
             http_client,
             USER_AGENT,
-            ACCOUNT_FAILURE_THRESHOLD,
-            RATE_LIMIT_COOLDOWN_SECONDS,
+            RETRY_POLICY,
             SESSION_CACHE_TTL_SECONDS,
             global_stats
         )
@@ -1341,9 +1364,7 @@ async def admin_disable_account(request: Request, account_id: str):
     global multi_account_mgr
     try:
         multi_account_mgr = _update_account_disabled_status(
-            account_id, True, multi_account_mgr, http_client, USER_AGENT,
-            ACCOUNT_FAILURE_THRESHOLD, RATE_LIMIT_COOLDOWN_SECONDS,
-            SESSION_CACHE_TTL_SECONDS, global_stats
+            account_id, True, multi_account_mgr
         )
         return {"status": "success", "message": f"账户 {account_id} 已禁用", "account_count": len(multi_account_mgr.accounts)}
     except Exception as e:
@@ -1357,9 +1378,7 @@ async def admin_enable_account(request: Request, account_id: str):
     global multi_account_mgr
     try:
         multi_account_mgr = _update_account_disabled_status(
-            account_id, False, multi_account_mgr, http_client, USER_AGENT,
-            ACCOUNT_FAILURE_THRESHOLD, RATE_LIMIT_COOLDOWN_SECONDS,
-            SESSION_CACHE_TTL_SECONDS, global_stats
+            account_id, False, multi_account_mgr
         )
 
         # 重置运行时错误状态（允许手动恢复错误禁用的账户）
@@ -1448,7 +1467,9 @@ async def admin_get_settings(request: Request):
             "max_request_retries": config.retry.max_request_retries,
             "max_account_switch_tries": config.retry.max_account_switch_tries,
             "account_failure_threshold": config.retry.account_failure_threshold,
-            "rate_limit_cooldown_seconds": config.retry.rate_limit_cooldown_seconds,
+            "text_rate_limit_cooldown_seconds": config.retry.text_rate_limit_cooldown_seconds,
+            "images_rate_limit_cooldown_seconds": config.retry.images_rate_limit_cooldown_seconds,
+            "videos_rate_limit_cooldown_seconds": config.retry.videos_rate_limit_cooldown_seconds,
             "session_cache_ttl_seconds": config.retry.session_cache_ttl_seconds,
             "auto_refresh_accounts_seconds": config.retry.auto_refresh_accounts_seconds,
             "scheduled_refresh_enabled": config.retry.scheduled_refresh_enabled,
@@ -1470,7 +1491,8 @@ async def admin_update_settings(request: Request, new_settings: dict = Body(...)
     global API_KEY, PROXY_FOR_AUTH, PROXY_FOR_CHAT, BASE_URL, LOGO_URL, CHAT_URL
     global IMAGE_GENERATION_ENABLED, IMAGE_GENERATION_MODELS
     global MAX_NEW_SESSION_TRIES, MAX_REQUEST_RETRIES, MAX_ACCOUNT_SWITCH_TRIES
-    global ACCOUNT_FAILURE_THRESHOLD, RATE_LIMIT_COOLDOWN_SECONDS, SESSION_CACHE_TTL_SECONDS, AUTO_REFRESH_ACCOUNTS_SECONDS
+    global RETRY_POLICY
+    global SESSION_CACHE_TTL_SECONDS, AUTO_REFRESH_ACCOUNTS_SECONDS
     global SESSION_EXPIRE_HOURS, multi_account_mgr, http_client, http_client_chat, http_client_auth
 
     try:
@@ -1518,14 +1540,19 @@ async def admin_update_settings(request: Request, new_settings: dict = Body(...)
         retry.setdefault("auto_refresh_accounts_seconds", config.retry.auto_refresh_accounts_seconds)
         retry.setdefault("scheduled_refresh_enabled", config.retry.scheduled_refresh_enabled)
         retry.setdefault("scheduled_refresh_interval_minutes", config.retry.scheduled_refresh_interval_minutes)
+        retry.setdefault("text_rate_limit_cooldown_seconds", config.retry.text_rate_limit_cooldown_seconds)
+        retry.setdefault("images_rate_limit_cooldown_seconds", config.retry.images_rate_limit_cooldown_seconds)
+        retry.setdefault("videos_rate_limit_cooldown_seconds", config.retry.videos_rate_limit_cooldown_seconds)
         new_settings["retry"] = retry
 
         # 保存旧配置用于对比
         old_proxy_for_auth = PROXY_FOR_AUTH
         old_proxy_for_chat = PROXY_FOR_CHAT
         old_retry_config = {
-            "account_failure_threshold": ACCOUNT_FAILURE_THRESHOLD,
-            "rate_limit_cooldown_seconds": RATE_LIMIT_COOLDOWN_SECONDS,
+            "account_failure_threshold": RETRY_POLICY.account_failure_threshold,
+            "text_rate_limit_cooldown_seconds": RETRY_POLICY.cooldowns.text,
+            "images_rate_limit_cooldown_seconds": RETRY_POLICY.cooldowns.images,
+            "videos_rate_limit_cooldown_seconds": RETRY_POLICY.cooldowns.videos,
             "session_cache_ttl_seconds": SESSION_CACHE_TTL_SECONDS
         }
 
@@ -1552,8 +1579,7 @@ async def admin_update_settings(request: Request, new_settings: dict = Body(...)
         MAX_NEW_SESSION_TRIES = config.retry.max_new_session_tries
         MAX_REQUEST_RETRIES = config.retry.max_request_retries
         MAX_ACCOUNT_SWITCH_TRIES = config.retry.max_account_switch_tries
-        ACCOUNT_FAILURE_THRESHOLD = config.retry.account_failure_threshold
-        RATE_LIMIT_COOLDOWN_SECONDS = config.retry.rate_limit_cooldown_seconds
+        RETRY_POLICY = build_retry_policy()
         SESSION_CACHE_TTL_SECONDS = config.retry.session_cache_ttl_seconds
         AUTO_REFRESH_ACCOUNTS_SECONDS = config.retry.auto_refresh_accounts_seconds
         SESSION_EXPIRE_HOURS = config.session.expire_hours
@@ -1616,8 +1642,10 @@ async def admin_update_settings(request: Request, new_settings: dict = Body(...)
 
         # 检查是否需要更新账户管理器配置（重试策略变化）
         retry_changed = (
-            old_retry_config["account_failure_threshold"] != ACCOUNT_FAILURE_THRESHOLD or
-            old_retry_config["rate_limit_cooldown_seconds"] != RATE_LIMIT_COOLDOWN_SECONDS or
+            old_retry_config["account_failure_threshold"] != RETRY_POLICY.account_failure_threshold or
+            old_retry_config["text_rate_limit_cooldown_seconds"] != RETRY_POLICY.cooldowns.text or
+            old_retry_config["images_rate_limit_cooldown_seconds"] != RETRY_POLICY.cooldowns.images or
+            old_retry_config["videos_rate_limit_cooldown_seconds"] != RETRY_POLICY.cooldowns.videos or
             old_retry_config["session_cache_ttl_seconds"] != SESSION_CACHE_TTL_SECONDS
         )
 
@@ -1626,8 +1654,11 @@ async def admin_update_settings(request: Request, new_settings: dict = Body(...)
             # 更新所有账户管理器的配置
             multi_account_mgr.cache_ttl = SESSION_CACHE_TTL_SECONDS
             for account_id, account_mgr in multi_account_mgr.accounts.items():
-                account_mgr.account_failure_threshold = ACCOUNT_FAILURE_THRESHOLD
-                account_mgr.rate_limit_cooldown_seconds = RATE_LIMIT_COOLDOWN_SECONDS
+                account_mgr.apply_retry_policy(RETRY_POLICY)
+            if register_service:
+                register_service.retry_policy = RETRY_POLICY
+            if login_service:
+                login_service.retry_policy = RETRY_POLICY
 
         logger.info(f"[CONFIG] 系统设置已更新并实时生效")
         return {"status": "success", "message": "设置已保存并实时生效！"}
@@ -1895,6 +1926,8 @@ async def chat_impl(
     # 保存模型信息到 request.state（用于 Uptime 追踪）
     request.state.model = req.model
 
+    required_quota_types = get_required_quota_types(req.model)
+
     # 3. 生成会话指纹，获取Session锁（防止同一对话的并发请求冲突）
     conv_key = get_conversation_key([m.model_dump() for m in req.messages], client_ip)
     session_lock = await multi_account_mgr.acquire_session_lock(conv_key)
@@ -1906,19 +1939,27 @@ async def chat_impl(
         if cached_session:
             # 使用已绑定的账户
             account_id = cached_session["account_id"]
-            account_manager = await multi_account_mgr.get_account(account_id, request_id)
-            google_session = cached_session["session_id"]
-            is_new_conversation = False
-            request.state.last_account_id = account_manager.config.account_id
-            logger.info(f"[CHAT] [{account_id}] [req_{request_id}] 继续会话: {google_session[-12:]}")
-        else:
+            try:
+                account_manager = await multi_account_mgr.get_account(account_id, request_id, required_quota_types)
+                google_session = cached_session["session_id"]
+                is_new_conversation = False
+                request.state.last_account_id = account_manager.config.account_id
+                logger.info(f"[CHAT] [{account_id}] [req_{request_id}] 继续会话: {google_session[-12:]}")
+            except HTTPException as e:
+                logger.warning(
+                    f"[CHAT] [req_{request_id}] 缓存会话账户不可用，切换新账户: {account_id} ({str(e.detail)})"
+                )
+                multi_account_mgr.global_session_cache.pop(conv_key, None)
+                cached_session = None
+
+        if not cached_session:
             # 新对话：轮询选择可用账户，失败时尝试其他账户
             max_account_tries = min(MAX_NEW_SESSION_TRIES, len(multi_account_mgr.accounts))
             last_error = None
 
             for attempt in range(max_account_tries):
                 try:
-                    account_manager = await multi_account_mgr.get_account(None, request_id)
+                    account_manager = await multi_account_mgr.get_account(None, request_id, required_quota_types)
                     google_session = await create_google_session(account_manager, http_client, USER_AGENT, request_id)
                     # 线程安全地绑定账户到此对话
                     await multi_account_mgr.set_session_cache(
@@ -2089,9 +2130,8 @@ async def chat_impl(
                 # 记录账号池状态（请求失败）
                 uptime_tracker.record_request("account_pool", False, status_code=status_code)
 
-                # 判断请求类型以传递quota_type（使用字典映射）
-                quota_type = MODEL_TO_QUOTA_TYPE.get(req.model)
-                # 普通对话模型返回None（text配额是基础配额，所有请求都需要）
+                # 判断请求类型以传递 quota_type
+                quota_type = get_request_quota_type(req.model)
 
                 # 使用统一的错误处理入口
                 if is_http_exception:
@@ -2111,6 +2151,7 @@ async def chat_impl(
                         if (acc.should_retry() and
                             not acc.config.is_expired() and
                             not acc.config.disabled and
+                            acc.are_quotas_available(required_quota_types) and
                             acc.config.account_id not in failed_accounts)
                     )
 
@@ -2127,7 +2168,7 @@ async def chat_impl(
                         new_account = None
 
                         for _ in range(max_account_tries):
-                            candidate = await multi_account_mgr.get_account(None, request_id)
+                            candidate = await multi_account_mgr.get_account(None, request_id, required_quota_types)
                             if candidate.config.account_id not in failed_accounts:
                                 new_account = candidate
                                 break
