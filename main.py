@@ -815,6 +815,33 @@ async def startup_event():
     else:
         logger.info("[SYSTEM] 自动登录刷新未启用或依赖不可用")
 
+    # 启动冷却状态定期保存任务（每5分钟保存一次）
+    if storage.is_database_enabled():
+        asyncio.create_task(save_cooldown_states_task())
+        logger.info("[SYSTEM] 冷却状态定期保存任务已启动（间隔: 5分钟）")
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """应用关闭时保存冷却状态"""
+    if storage.is_database_enabled():
+        try:
+            success_count = await account.save_all_cooldown_states(multi_account_mgr)
+            logger.info(f"[SYSTEM] 应用关闭，已保存 {success_count}/{len(multi_account_mgr.accounts)} 个账户的冷却状态")
+        except Exception as e:
+            logger.error(f"[SYSTEM] 关闭时保存冷却状态失败: {e}")
+
+
+async def save_cooldown_states_task():
+    """定期保存所有账户的冷却状态到数据库"""
+    while True:
+        try:
+            await asyncio.sleep(300)  # 每5分钟执行一次
+            success_count = await account.save_all_cooldown_states(multi_account_mgr)
+            logger.debug(f"[COOLDOWN] 定期保存: {success_count}/{len(multi_account_mgr.accounts)} 个账户")
+        except Exception as e:
+            logger.error(f"[COOLDOWN] 定期保存失败: {e}")
+
 
 async def cleanup_database_task():
     """定时清理数据库过期数据"""
@@ -1998,6 +2025,12 @@ async def chat_impl(
                         else:
                             account_manager.handle_non_http_error("创建会话", request_id, quota_type)
 
+                        # 保存冷却状态到数据库
+                        try:
+                            await account.save_account_cooldown_state(account_manager.config.account_id, account_manager)
+                        except Exception as save_err:
+                            logger.warning(f"[COOLDOWN] 保存冷却状态失败: {save_err}")
+
                     if retry_idx == max_retries - 1:
                         logger.error(f"[CHAT] [req_{request_id}] 所有账户均不可用")
                         status = classify_error_status(503, last_error if isinstance(last_error, Exception) else Exception("account_pool_unavailable"))
@@ -2138,6 +2171,12 @@ async def chat_impl(
                     account_manager.handle_http_error(status_code, str(e.detail) if hasattr(e, 'detail') else "", request_id, quota_type)
                 else:
                     account_manager.handle_non_http_error("聊天请求", request_id, quota_type)
+
+                # 保存冷却状态到数据库
+                try:
+                    await account.save_account_cooldown_state(account_manager.config.account_id, account_manager)
+                except Exception as save_err:
+                    logger.warning(f"[COOLDOWN] 保存冷却状态失败: {save_err}")
 
                 # 检查是否还能继续重试
                 if retry_idx < max_retries - 1:

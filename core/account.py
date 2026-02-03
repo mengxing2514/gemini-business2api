@@ -750,6 +750,22 @@ def load_multi_account_config(
             logger.debug(f"[CONFIG] 账户 {config.account_id} 已过期，仍加载用于展示")
 
         manager.add_account(config, http_client, user_agent, retry_policy, global_stats)
+
+        # 从数据库恢复冷却状态和统计数据
+        account_mgr = manager.accounts[config.account_id]
+        if "quota_cooldowns" in acc:
+            account_mgr.quota_cooldowns = dict(acc["quota_cooldowns"])
+        if "generic_cooldown_until" in acc:
+            account_mgr.generic_cooldown_until = float(acc["generic_cooldown_until"])
+        if "permanently_disabled" in acc:
+            account_mgr.permanently_disabled = bool(acc["permanently_disabled"])
+            if account_mgr.permanently_disabled:
+                account_mgr.is_available = False
+        if "conversation_count" in acc:
+            account_mgr.conversation_count = int(acc.get("conversation_count", 0))
+        if "failure_count" in acc:
+            account_mgr.failure_count = int(acc.get("failure_count", 0))
+
         if is_expired:
             manager.accounts[config.account_id].is_available = False
 
@@ -779,6 +795,8 @@ def reload_accounts(
             "last_error_time": account_mgr.last_error_time,
             "session_usage_count": account_mgr.session_usage_count,
             "quota_cooldowns": dict(account_mgr.quota_cooldowns),
+            "generic_cooldown_until": account_mgr.generic_cooldown_until,
+            "permanently_disabled": account_mgr.permanently_disabled,
         }
 
     # Clear session cache and reload config.
@@ -801,6 +819,8 @@ def reload_accounts(
             account_mgr.last_error_time = stats.get("last_error_time", 0.0)
             account_mgr.session_usage_count = stats.get("session_usage_count", 0)
             account_mgr.quota_cooldowns = stats.get("quota_cooldowns", {})
+            account_mgr.generic_cooldown_until = stats.get("generic_cooldown_until", 0.0)
+            account_mgr.permanently_disabled = stats.get("permanently_disabled", False)
             logger.debug(f"[CONFIG] Account {account_id} refreshed; runtime state preserved")
 
     logger.info(
@@ -1007,3 +1027,73 @@ def bulk_delete_accounts(
     success_count = len(deleted_ids)
     logger.info(f"[CONFIG] 批量删除 {success_count}/{len(account_ids)} 个账户")
     return multi_account_mgr, success_count, errors
+
+
+async def save_account_cooldown_state(account_id: str, account_mgr: AccountManager) -> bool:
+    """保存单个账户的冷却状态到数据库"""
+    if not storage.is_database_enabled():
+        return False
+
+    try:
+        # 加载所有账户数据
+        accounts_data = await storage.load_accounts()
+        if not accounts_data:
+            logger.warning(f"[COOLDOWN] 无法加载账户数据")
+            return False
+
+        # 查找并更新目标账户
+        found = False
+        for i, acc in enumerate(accounts_data, 1):
+            # 使用与 load_multi_account_config 相同的逻辑获取 account_id
+            acc_id = get_account_id(acc, i)
+            if acc_id == account_id:
+                # 更新冷却状态字段
+                acc["quota_cooldowns"] = dict(account_mgr.quota_cooldowns)
+                acc["generic_cooldown_until"] = account_mgr.generic_cooldown_until
+                acc["permanently_disabled"] = account_mgr.permanently_disabled
+                acc["conversation_count"] = account_mgr.conversation_count
+                acc["failure_count"] = account_mgr.failure_count
+                found = True
+                logger.debug(f"[COOLDOWN] 找到账户 {account_id}，准备保存")
+                break
+
+        if not found:
+            logger.warning(f"[COOLDOWN] 账户 {account_id} 不存在，共有 {len(accounts_data)} 个账户")
+            return False
+
+        # 保存所有账户数据
+        success = await storage.save_accounts(accounts_data)
+        if success:
+            logger.debug(f"[COOLDOWN] 账户 {account_id} 冷却状态已保存")
+        else:
+            logger.warning(f"[COOLDOWN] 保存账户 {account_id} 失败")
+        return success
+    except Exception as e:
+        logger.error(f"[COOLDOWN] 保存账户 {account_id} 冷却状态失败: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+def save_account_cooldown_state_sync(account_id: str, account_mgr: AccountManager) -> bool:
+    """保存单个账户的冷却状态到数据库（同步版本）"""
+    try:
+        return asyncio.run(save_account_cooldown_state(account_id, account_mgr))
+    except Exception as e:
+        logger.error(f"[COOLDOWN] 同步保存账户 {account_id} 冷却状态失败: {e}")
+        return False
+
+
+async def save_all_cooldown_states(multi_account_mgr: MultiAccountManager) -> int:
+    """保存所有账户的冷却状态到数据库"""
+    if not storage.is_database_enabled():
+        return 0
+
+    success_count = 0
+    for account_id, account_mgr in multi_account_mgr.accounts.items():
+        if await save_account_cooldown_state(account_id, account_mgr):
+            success_count += 1
+
+    logger.info(f"[COOLDOWN] 批量保存冷却状态: {success_count}/{len(multi_account_mgr.accounts)} 个账户")
+    return success_count
+
