@@ -2587,10 +2587,15 @@ async def stream_chat_generator(session: str, text_content: str, file_ids: List[
             # 记录流处理总结
             logger.info(f"[API] [{account_manager.config.account_id}] [req_{request_id}] 流处理完成: 收到{response_count}个响应对象, 累计内容长度{len(full_content)}字符")
             if response_count > 0 and len(full_content) == 0:
-                logger.warning(f"[API] [{account_manager.config.account_id}] [req_{request_id}] ⚠️ 空响应警告: 收到{response_count}个响应但无文本内容，可能是政策违规或上游错误")
+                logger.warning(f"[API] [{account_manager.config.account_id}] [req_{request_id}] ⚠️ 空响应警告: 收到{response_count}个响应但无文本内容，可能是思考模型未生成最终回答或上游错误")
                 # 打印第一个响应对象的完整结构用于调试
                 if json_objects:
                     logger.warning(f"[API] [{account_manager.config.account_id}] [req_{request_id}] 第一个响应完整结构: {json.dumps(json_objects[0], ensure_ascii=False)}")
+
+                # 重置 first_response_time 并抛异常，触发调用方切换账号重试
+                if request is not None:
+                    request.state.first_response_time = None
+                raise HTTPException(status_code=502, detail="Thinking model produced thoughts but no final content")
 
 
         except ValueError as e:
