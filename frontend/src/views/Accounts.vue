@@ -1776,14 +1776,29 @@ const handleImportFile = async (event: Event) => {
     const content = await file.text()
     if (file.name.toLowerCase().endsWith('.json') || file.type.includes('json')) {
       const parsed = JSON.parse(content)
-      const list = Array.isArray(parsed) ? parsed : parsed?.accounts
-      if (!Array.isArray(list)) {
+      const importList = Array.isArray(parsed) ? parsed : parsed?.accounts
+      if (!Array.isArray(importList)) {
         importError.value = 'JSON 格式错误：需要数组或包含 accounts 字段'
         return
       }
-      await accountsStore.updateConfig(list)
-      selectedIds.value = new Set(list.map((item: any) => item.id).filter(Boolean))
-      toast.success(`导入 ${list.length} 条账号配置`)
+      const existing = await loadConfigList()
+      const next = [...existing]
+      const indexMap = new Map(next.map((acc, idx) => [acc.id, idx]))
+      const importedIds: string[] = []
+
+      importList.forEach((item: any) => {
+        const idx = indexMap.get(item.id || '')
+        if (idx === undefined) {
+          next.push(item)
+        } else {
+          next[idx] = { ...next[idx], ...item }
+        }
+        if (item.id) importedIds.push(item.id)
+      })
+
+      await accountsStore.updateConfig(next)
+      selectedIds.value = new Set(importedIds)
+      toast.success(`导入 ${importList.length} 条账号配置`)
       closeRegisterModal()
       return
     }
