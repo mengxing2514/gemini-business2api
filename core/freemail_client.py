@@ -196,16 +196,39 @@ class FreemailClient:
                 emails_with_time.sort(key=lambda item: item[1] or datetime.min, reverse=True)
                 emails = [item[0] for item in emails_with_time]
 
+            skipped_no_time_indexes = []
+            skipped_expired_indexes = []
+
+            def _format_indexes(indexes: list[int]) -> str:
+                if len(indexes) <= 10:
+                    return ",".join(str(index) for index in indexes)
+                preview = ",".join(str(index) for index in indexes[:10])
+                return f"{preview}...(+{len(indexes) - 10})"
+
+            def _log_skip_summary() -> None:
+                if skipped_no_time_indexes:
+                    self._log(
+                        "info",
+                        f"⏭️ 已跳过 {len(skipped_no_time_indexes)} 封缺少可解析时间的邮件"
+                        f"（序号: {_format_indexes(skipped_no_time_indexes)}）",
+                    )
+                if skipped_expired_indexes:
+                    self._log(
+                        "info",
+                        f"⏭️ 已跳过 {len(skipped_expired_indexes)} 封过期邮件"
+                        f"（序号: {_format_indexes(skipped_expired_indexes)}）",
+                    )
+
             # 从最新一封邮件开始查找
             for idx, email_data in enumerate(emails, 1):
                 # 时间过滤
                 if since_time:
                     email_time = _parse_email_time(email_data)
                     if email_time is None:
-                        self._log("info", f"⏭️ 邮件 {idx} 缺少可解析时间，跳过以避免旧验证码")
+                        skipped_no_time_indexes.append(idx)
                         continue
                     if email_time < since_time:
-                        self._log("info", f"⏭️ 邮件 {idx} 时间过早，跳过")
+                        skipped_expired_indexes.append(idx)
                         continue
 
                 # 获取邮件完整内容
@@ -238,11 +261,13 @@ class FreemailClient:
                 full_content = subject + " " + content + " " + html_content
                 code = extract_verification_code(full_content)
                 if code:
+                    _log_skip_summary()
                     self._log("info", f"✅ 找到验证码: {code}")
                     return code
                 else:
                     self._log("info", f"❌ 邮件 {idx} 中未找到验证码")
 
+            _log_skip_summary()
             self._log("warning", "⚠️ 所有邮件中均未找到验证码")
             return None
 
