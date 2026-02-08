@@ -13,6 +13,7 @@ from core.config import config
 from core.mail_providers import create_temp_mail_client
 from core.gemini_automation import GeminiAutomation
 from core.microsoft_mail_client import MicrosoftMailClient
+from core.proxy_utils import parse_proxy_setting
 
 logger = logging.getLogger("gemini.login")
 
@@ -190,6 +191,7 @@ class LoginService(BaseTaskService[LoginTask]):
         mail_client_id = account.get("mail_client_id")
         mail_refresh_token = account.get("mail_refresh_token")
         mail_tenant = account.get("mail_tenant") or "consumers"
+        proxy_for_auth, _ = parse_proxy_setting(config.basic.proxy_for_auth)
 
         def log_cb(level, message):
             self._append_log(task, level, f"[{account_id}] {message}")
@@ -205,7 +207,7 @@ class LoginService(BaseTaskService[LoginTask]):
                 client_id=mail_client_id,
                 refresh_token=mail_refresh_token,
                 tenant=mail_tenant,
-                proxy=config.basic.proxy_for_auth,
+                proxy=proxy_for_auth,
                 log_callback=log_cb,
             )
             client.set_credentials(mail_address)
@@ -248,12 +250,25 @@ class LoginService(BaseTaskService[LoginTask]):
 
         log_cb("info", f"🌐 启动浏览器 (无头模式={headless})...")
 
-        automation = GeminiAutomation(
-            user_agent=self.user_agent,
-            proxy=config.basic.proxy_for_auth,
-            headless=headless,
-            log_callback=log_cb,
-        )
+        if browser_engine == "dp":
+            # DrissionPage 引擎：支持有头和无头模式
+            automation = GeminiAutomation(
+                user_agent=self.user_agent,
+                proxy=config.basic.proxy_for_auth,
+                headless=headless,
+                log_callback=log_cb,
+            )
+        else:
+            # undetected-chromedriver 引擎：无头模式反检测能力弱，强制使用有头模式
+            if headless:
+                log_cb("warning", "⚠️ UC 引擎无头模式反检测能力弱，强制使用有头模式")
+                headless = False
+            automation = GeminiAutomationUC(
+                user_agent=self.user_agent,
+                proxy=config.basic.proxy_for_auth,
+                headless=headless,
+                log_callback=log_cb,
+            )
         # 允许外部取消时立刻关闭浏览器
         self._add_cancel_hook(task.id, lambda: getattr(automation, "stop", lambda: None)())
         try:
