@@ -347,7 +347,7 @@ logger.addHandler(memory_handler)
 
 # ---------- 配置管理（使用统一配置系统）----------
 # 所有配置通过 config_manager 访问，优先级：环境变量 > YAML > 默认值
-TIMEOUT_SECONDS = 600
+TIMEOUT_SECONDS = 300
 API_KEY = config.basic.api_key
 ADMIN_KEY = config.security.admin_key
 _proxy_auth, _no_proxy_auth = parse_proxy_setting(config.basic.proxy_for_auth)
@@ -2469,6 +2469,7 @@ async def stream_chat_generator(session: str, text_content: str, file_ids: List[
         "https://biz-discoveryengine.googleapis.com/v1alpha/locations/global/widgetStreamAssist",
         headers=headers,
         json=body,
+        timeout=300.0,
     ) as r:
         if r.status_code != 200:
             error_text = await r.aread()
