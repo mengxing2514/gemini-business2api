@@ -2487,7 +2487,16 @@ async def stream_chat_generator(session: str, text_content: str, file_ids: List[
 
                 # 检查是否有错误或政策违规信息
                 if "error" in json_obj:
-                    logger.warning(f"[API] [{account_manager.config.account_id}] [req_{request_id}] 上游返回错误: {json.dumps(json_obj.get('error'), ensure_ascii=False)}")
+                    error_info = json_obj.get("error", {})
+                    error_code = error_info.get("code", 0)
+                    error_message = error_info.get("message", "")
+                    logger.warning(f"[API] [{account_manager.config.account_id}] [req_{request_id}] 上游返回错误: {json.dumps(error_info, ensure_ascii=False)}")
+
+                    # 上游 429 配额耗尽：立即标记冷却并抛异常，触发切换账户
+                    if error_code == 429 or "RESOURCE_EXHAUSTED" in error_info.get("status", ""):
+                        quota_type = get_request_quota_type(model_name)
+                        account_manager.handle_http_error(429, error_message[:200], request_id, quota_type)
+                        raise HTTPException(status_code=429, detail=f"Upstream quota exhausted: {error_message[:200]}")
 
                 stream_response = json_obj.get("streamAssistResponse", {})
                 answer = stream_response.get("answer", {})
