@@ -289,6 +289,13 @@
                   placement="up"
                   class="w-full"
                 />
+                <label class="block text-xs text-muted-foreground">图片分辨率</label>
+                <SelectMenu
+                  v-model="localSettings.image_generation.image_size"
+                  :options="imageSizeOptions"
+                  placement="up"
+                  class="w-full"
+                />
                 <label class="block text-xs text-muted-foreground">支持模型</label>
                 <SelectMenu
                   v-model="localSettings.image_generation.supported_models"
@@ -422,6 +429,11 @@ const imageOutputOptions = [
   { label: 'Base64 编码', value: 'base64' },
   { label: 'URL 链接', value: 'url' },
 ]
+const imageSizeOptions = [
+  { label: '1K (1024×1024)', value: '1K' },
+  { label: '2K (2048×2048)', value: '2K' },
+  { label: '4K (4096×4096)', value: '4K' },
+]
 const videoOutputOptions = [
   { label: 'HTML 视频标签', value: 'html' },
   { label: 'URL 链接', value: 'url' },
@@ -449,8 +461,9 @@ const imageModelOptions = computed(() => {
 watch(settings, (value) => {
   if (!value) return
   const next = JSON.parse(JSON.stringify(value))
-  next.image_generation = next.image_generation || { enabled: false, supported_models: [], output_format: 'base64' }
+  next.image_generation = next.image_generation || { enabled: false, supported_models: [], output_format: 'base64', image_size: '1K' }
   next.image_generation.output_format ||= 'base64'
+  next.image_generation.image_size ||= '1K'
   next.video_generation = next.video_generation || { output_format: 'html' }
   next.video_generation.output_format ||= 'html'
   next.basic = next.basic || {}

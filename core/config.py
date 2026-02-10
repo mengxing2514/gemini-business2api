@@ -79,6 +79,7 @@ class ImageGenerationConfig(BaseModel):
         description="支持图片生成的模型列表"
     )
     output_format: str = Field(default="base64", description="图片输出格式：base64 或 url")
+    image_size: str = Field(default="1K", description="生成图片分辨率：1K/2K/4K（仅 Gemini 3 Pro 支持 4K）")
 
 
 class VideoGenerationConfig(BaseModel):
@@ -424,6 +425,11 @@ class ConfigManager:
     def image_output_format(self) -> str:
         """图片输出格式"""
         return self._config.image_generation.output_format
+
+    @property
+    def image_size(self) -> str:
+        """生成图片分辨率"""
+        return self._config.image_generation.image_size
 
     @property
     def video_output_format(self) -> str:

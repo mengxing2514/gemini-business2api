@@ -1467,7 +1467,8 @@ async def admin_get_settings(request: Request):
         "image_generation": {
             "enabled": config.image_generation.enabled,
             "supported_models": config.image_generation.supported_models,
-            "output_format": config.image_generation.output_format
+            "output_format": config.image_generation.output_format,
+            "image_size": config.image_generation.image_size
         },
         "video_generation": {
             "output_format": config.video_generation.output_format
@@ -1534,6 +1535,10 @@ async def admin_update_settings(request: Request, new_settings: dict = Body(...)
         if output_format not in ("base64", "url"):
             output_format = "base64"
         image_generation["output_format"] = output_format
+        image_size = str(image_generation.get("image_size") or config_manager.image_size).upper()
+        if image_size not in ("1K", "2K", "4K"):
+            image_size = "1K"
+        image_generation["image_size"] = image_size
         new_settings["image_generation"] = image_generation
 
         video_generation = dict(new_settings.get("video_generation") or {})
@@ -2440,9 +2445,13 @@ async def stream_chat_generator(session: str, text_content: str, file_ids: List[
 
     target_model_id = MODEL_MAPPING.get(model_name)
     if target_model_id:
-        body["streamAssistRequest"]["assistGenerationConfig"] = {
-            "modelId": target_model_id
-        }
+        assist_config = {"modelId": target_model_id}
+        # 如果请求涉及图片生成，传递 imageConfig（分辨率）
+        if "imageGenerationSpec" in tools_spec:
+            image_size = config_manager.image_size
+            if image_size and image_size != "1K":
+                assist_config["imageConfig"] = {"imageSize": image_size}
+        body["streamAssistRequest"]["assistGenerationConfig"] = assist_config
 
     if is_stream:
         chunk = create_chunk(chat_id, created_time, model_name, {"role": "assistant"}, None)

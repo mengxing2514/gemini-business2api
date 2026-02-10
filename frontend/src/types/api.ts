@@ -116,6 +116,7 @@ export interface Settings {
     enabled: boolean
     supported_models: string[]
     output_format?: 'base64' | 'url'
+    image_size?: '1K' | '2K' | '4K'
   }
   session: {
     expire_hours: number
