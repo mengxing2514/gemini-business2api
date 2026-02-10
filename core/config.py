@@ -99,8 +99,8 @@ class RetryConfig(BaseModel):
     max_account_switch_tries: int = Field(default=5, ge=1, le=20, description="账户切换尝试次数")
     rate_limit_cooldown_seconds: int = Field(default=7200, ge=3600, le=43200, description="429冷却时间（秒）")
     text_rate_limit_cooldown_seconds: int = Field(default=7200, ge=3600, le=86400, description="对话配额冷却（秒）")
-    images_rate_limit_cooldown_seconds: int = Field(default=14400, ge=3600, le=86400, description="绘图配额冷却（秒）")
-    videos_rate_limit_cooldown_seconds: int = Field(default=14400, ge=3600, le=86400, description="视频配额冷却（秒）")
+    images_rate_limit_cooldown_seconds: int = Field(default=5, ge=1, le=86400, description="绘图配额冷却（秒）")
+    videos_rate_limit_cooldown_seconds: int = Field(default=5, ge=1, le=86400, description="视频配额冷却（秒）")
     session_cache_ttl_seconds: int = Field(default=3600, ge=0, le=86400, description="会话缓存时间（秒，0表示禁用缓存）")
     auto_refresh_accounts_seconds: int = Field(default=60, ge=0, le=600, description="自动刷新账号间隔（秒，0禁用）")
     # 定时刷新配置

@@ -97,11 +97,11 @@
                 <label class="col-span-2 text-xs text-muted-foreground">对话冷却（小时）</label>
                 <input v-model.number="textRateLimitCooldownHours" type="number" min="1" max="24" step="1" class="col-span-2 rounded-2xl border border-input bg-background px-3 py-2" />
 
-                <label class="col-span-2 text-xs text-muted-foreground">绘图冷却（小时）</label>
-                <input v-model.number="imagesRateLimitCooldownHours" type="number" min="1" max="24" step="1" class="col-span-2 rounded-2xl border border-input bg-background px-3 py-2" />
+                <label class="col-span-2 text-xs text-muted-foreground">绘图冷却（秒）</label>
+                <input v-model.number="localSettings.retry.images_rate_limit_cooldown_seconds" type="number" min="1" max="86400" step="1" class="col-span-2 rounded-2xl border border-input bg-background px-3 py-2" />
 
-                <label class="col-span-2 text-xs text-muted-foreground">视频冷却（小时）</label>
-                <input v-model.number="videosRateLimitCooldownHours" type="number" min="1" max="24" step="1" class="col-span-2 rounded-2xl border border-input bg-background px-3 py-2" />
+                <label class="col-span-2 text-xs text-muted-foreground">视频冷却（秒）</label>
+                <input v-model.number="localSettings.retry.videos_rate_limit_cooldown_seconds" type="number" min="1" max="86400" step="1" class="col-span-2 rounded-2xl border border-input bg-background px-3 py-2" />
 
                 <label class="col-span-2 text-xs text-muted-foreground">会话缓存秒数</label>
                 <input v-model.number="localSettings.retry.session_cache_ttl_seconds" type="number" min="0" class="col-span-2 rounded-2xl border border-input bg-background px-3 py-2" />
@@ -386,8 +386,6 @@ const errorMessage = ref('')
 // 429冷却时间：小时 ↔ 秒 的转换
 const DEFAULT_COOLDOWN_HOURS = {
   text: 2,
-  images: 4,
-  videos: 4
 } as const
 
 const toCooldownHours = (seconds: number | undefined, fallbackHours: number) => {
@@ -396,7 +394,7 @@ const toCooldownHours = (seconds: number | undefined, fallbackHours: number) => 
 }
 
 const createCooldownHours = (
-  key: 'text_rate_limit_cooldown_seconds' | 'images_rate_limit_cooldown_seconds' | 'videos_rate_limit_cooldown_seconds',
+  key: 'text_rate_limit_cooldown_seconds',
   fallbackHours: number
 ) => computed({
   get: () => toCooldownHours(localSettings.value?.retry?.[key], fallbackHours),
@@ -410,14 +408,6 @@ const createCooldownHours = (
 const textRateLimitCooldownHours = createCooldownHours(
   'text_rate_limit_cooldown_seconds',
   DEFAULT_COOLDOWN_HOURS.text
-)
-const imagesRateLimitCooldownHours = createCooldownHours(
-  'images_rate_limit_cooldown_seconds',
-  DEFAULT_COOLDOWN_HOURS.images
-)
-const videosRateLimitCooldownHours = createCooldownHours(
-  'videos_rate_limit_cooldown_seconds',
-  DEFAULT_COOLDOWN_HOURS.videos
 )
 
 const browserEngineOptions = [
